@@ -83,7 +83,7 @@ describe("@ztechnium/rai-sdk", () => {
 
   describe("health and heartbeat", () => {
     it("calls health without auth headers", async () => {
-      fetchMock.mock.mockImplementation(async (url, init) => {
+      fetchMock.mock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
         assert.equal(requestUrl(url), "https://rai.example.com/sdk/v1/health");
         assert.equal(init?.method, "GET");
         const headers = requestHeaders(init);
@@ -105,7 +105,7 @@ describe("@ztechnium/rai-sdk", () => {
     });
 
     it("sends heartbeat payload with integration metadata", async () => {
-      fetchMock.mock.mockImplementation(async (url, init) => {
+      fetchMock.mock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
         assert.equal(requestUrl(url), "https://rai.example.com/sdk/v1/heartbeat");
         assert.equal(init?.method, "POST");
         const headers = requestHeaders(init);
@@ -134,7 +134,7 @@ describe("@ztechnium/rai-sdk", () => {
     it("runs start → input → authorize → execution → output → end", async () => {
       const calls: Array<{ path: string; method: string; body?: unknown }> = [];
 
-      fetchMock.mock.mockImplementation(async (url, init) => {
+      fetchMock.mock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
         const fullUrl = requestUrl(url);
         const path = fullUrl.replace("https://rai.example.com", "");
         const body =
@@ -217,7 +217,7 @@ describe("@ztechnium/rai-sdk", () => {
       ["REQUIRE_APPROVAL", false],
     ] as const) {
       it(`maps ${decisionValue} to allowed=${String(allowed)}`, async () => {
-        fetchMock.mock.mockImplementation(async (url, init) => {
+        fetchMock.mock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
           if (
             requestUrl(url).endsWith("/actions/authorize") &&
             init?.method === "POST"
@@ -251,7 +251,7 @@ describe("@ztechnium/rai-sdk", () => {
 
   describe("idempotency header", () => {
     it("forwards Idempotency-Key on authorizeAction", async () => {
-      fetchMock.mock.mockImplementation(async (url, init) => {
+      fetchMock.mock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
         const fullUrl = requestUrl(url);
         if (fullUrl.endsWith("/sdk/v1/sessions")) {
           return jsonResponse({ rai_session_id: "sess-1" });
@@ -304,7 +304,7 @@ describe("@ztechnium/rai-sdk", () => {
       await assert.rejects(
         () => client.heartbeat(),
         (err: unknown) => {
-          assert.ok(err instanceof RAIError);
+          if (!(err instanceof RAIError)) return false;
           assert.equal(err.code, "INVALID_CREDENTIAL");
           assert.match(err.message, /Invalid agent key/);
           assert.equal(err.retryable, false);
@@ -318,7 +318,7 @@ describe("@ztechnium/rai-sdk", () => {
 
   describe("timeouts and fail-closed behavior", () => {
     it("wraps AbortController timeouts as RAI_UNAVAILABLE when failClosed", async () => {
-      fetchMock.mock.mockImplementation((_url, init) =>
+      fetchMock.mock.mockImplementation((_url: string | URL | Request, init?: RequestInit) =>
         new Promise((_resolve, reject) => {
           init?.signal?.addEventListener("abort", () => {
             reject(new DOMException("The operation was aborted.", "AbortError"));
@@ -337,7 +337,7 @@ describe("@ztechnium/rai-sdk", () => {
       await assert.rejects(
         () => client.health(),
         (err: unknown) => {
-          assert.ok(err instanceof RAIError);
+          if (!(err instanceof RAIError)) return false;
           assert.equal(err.code, "RAI_UNAVAILABLE");
           assert.equal(err.retryable, true);
           assert.match(String(err.message), /RAI unavailable/);
