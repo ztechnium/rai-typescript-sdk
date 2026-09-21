@@ -5,6 +5,10 @@ on:
     tags:
       - "v*"
 
+# Publishes via npm Trusted Publishing (OIDC). Requires:
+# 1. Package already exists on npm (first version published locally once), AND
+# 2. Trusted Publisher configured on npmjs.com for this repo + publish.yml
+# Do not set NODE_AUTH_TOKEN — a 2FA-gated token causes EOTP in CI.
 permissions:
   contents: read
   id-token: write
@@ -22,7 +26,6 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-          # Do not set cache: npm until package-lock.json is committed.
 
       - name: Install dependencies
         run: npm install
@@ -38,5 +41,3 @@ jobs:
 
       - name: Publish to npm
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
