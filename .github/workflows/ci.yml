@@ -12,6 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Plan requires 18/20/22; Node 18 is EOL but still in engines (>=18).
         node-version: [18, 20, 22]
 
     steps:
@@ -22,7 +23,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: npm
+          # Do not set cache: npm until package-lock.json is committed.
 
       - name: Install dependencies
         run: npm install
@@ -38,7 +39,7 @@ jobs:
 
       - name: Verify tarball install
         run: |
-          TARBALL=$(npm pack)
+          TARBALL=$(npm pack --silent)
           mkdir -p /tmp/rai-ts-sdk-install-test
           cd /tmp/rai-ts-sdk-install-test
           npm init -y
