@@ -44,7 +44,7 @@ describe("@ztechnium/rai-sdk", () => {
 
   describe("exports", () => {
     it("exposes SDK_VERSION and API_RANGE", () => {
-      assert.equal(SDK_VERSION, "0.1.0");
+      assert.equal(SDK_VERSION, "0.1.1");
       assert.match(API_RANGE, /^>=1\.0\.0,<2\.0\.0$/);
     });
   });

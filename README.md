@@ -1,5 +1,8 @@
 # @ztechnium/rai-sdk
 
+> **DO NOT EDIT HERE.** This directory is a temporary mirror.
+> Authoritative repository: [github.com/ztechnium/rai-typescript-sdk](https://github.com/ztechnium/rai-typescript-sdk)
+
 Official TypeScript/Node.js SDK for the RAI Control Plane stable `/sdk/v1` governance API.
 
 ## Install
@@ -121,6 +124,8 @@ The `exports` map exposes:
 Native ESM (`import`) support is planned as a follow-up dual-build (`"import"` condition). For ESM projects today, use dynamic `import()` of the CJS build or a bundler that resolves CJS interop.
 
 ## Development
+
+Contribute in the public repository: [github.com/ztechnium/rai-typescript-sdk](https://github.com/ztechnium/rai-typescript-sdk).
 
 ```bash
 npm install

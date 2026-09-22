@@ -1,6 +1,6 @@
 /** Official TypeScript SDK for RAI Control Plane /sdk/v1 */
 
-export const SDK_VERSION = "0.1.0";
+export const SDK_VERSION = "0.1.1";
 export const API_RANGE = ">=1.0.0,<2.0.0";
 
 export class RAIError extends Error {
@@ -284,13 +284,14 @@ export class RAIClient {
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       });
+      const responseText = await resp.text();
       if (!resp.ok) {
         let detail: Record<string, unknown> = {};
         try {
-          const payload = (await resp.json()) as Record<string, unknown>;
+          const payload = responseText ? (JSON.parse(responseText) as Record<string, unknown>) : {};
           detail = (payload.detail as Record<string, unknown>) ?? payload;
         } catch {
-          detail = { message: await resp.text() };
+          detail = { message: responseText || resp.statusText };
         }
         throw new RAIError(
           String(detail.error ?? "INVALID_REQUEST"),
@@ -302,8 +303,8 @@ export class RAIClient {
           }
         );
       }
-      if (resp.status === 204) return {};
-      return (await resp.json()) as Record<string, unknown>;
+      if (resp.status === 204 || !responseText) return {};
+      return JSON.parse(responseText) as Record<string, unknown>;
     } catch (err) {
       if (err instanceof RAIError) throw err;
       if (this.failClosed) {
