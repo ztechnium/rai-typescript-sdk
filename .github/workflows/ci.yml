@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Plan requires 18/20/22; Node 18 is EOL but still in engines (>=18).
+        node-version: [18, 20, 22]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          # Do not set cache: npm until package-lock.json is committed.
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Pack dry-run
+        run: npm pack --dry-run
+
+      - name: Verify tarball install
+        run: |
+          TARBALL=$(npm pack --silent)
+          mkdir -p /tmp/rai-ts-sdk-install-test
+          cd /tmp/rai-ts-sdk-install-test
+          npm init -y
+          npm install "$GITHUB_WORKSPACE/$TARBALL"
+          node -e "const { RAIClient, SDK_VERSION } = require('@ztechnium/rai-sdk'); if (SDK_VERSION !== '0.1.0') process.exit(1); console.log('RAI TypeScript SDK OK', typeof RAIClient);"
