@@ -39,9 +39,10 @@ jobs:
 
       - name: Verify tarball install
         run: |
+          export EXPECTED_VERSION=$(node -p "require('./package.json').version")
           TARBALL=$(npm pack --silent)
           mkdir -p /tmp/rai-ts-sdk-install-test
           cd /tmp/rai-ts-sdk-install-test
           npm init -y
           npm install "$GITHUB_WORKSPACE/$TARBALL"
-          node -e "const { RAIClient, SDK_VERSION } = require('@ztechnium/rai-sdk'); if (SDK_VERSION !== '0.1.0') process.exit(1); console.log('RAI TypeScript SDK OK', typeof RAIClient);"
+          node -e "const { RAIClient, SDK_VERSION } = require('@ztechnium/rai-sdk'); if (SDK_VERSION !== process.env.EXPECTED_VERSION) { console.error('SDK_VERSION mismatch:', SDK_VERSION, '!==', process.env.EXPECTED_VERSION); process.exit(1); } console.log('RAI TypeScript SDK OK', typeof RAIClient, SDK_VERSION);"
