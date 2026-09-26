@@ -1,6 +1,6 @@
 /** Official TypeScript SDK for RAI Control Plane /sdk/v1 */
 
-export const SDK_VERSION = "0.1.1";
+export const SDK_VERSION = "0.2.0";
 export const API_RANGE = ">=1.0.0,<2.0.0";
 
 export class RAIError extends Error {
@@ -37,6 +37,7 @@ export interface DecisionData {
   enforcement_receipt_id?: string | null;
   retryable?: boolean;
   allowed?: boolean;
+  approval?: { approval_request_id?: string | null; [key: string]: unknown };
   [key: string]: unknown;
 }
 
@@ -52,12 +53,14 @@ export class Decision {
   raw: DecisionData;
 
   constructor(data: DecisionData) {
+    const approval = data.approval ?? {};
     this.decision = data.decision;
     this.decisionId = data.decision_id;
     this.reasonCode = data.reason_code;
     this.humanMessage = data.human_message;
     this.machineReason = data.machine_reason;
-    this.approvalRequestId = data.approval_request_id;
+    this.approvalRequestId =
+      data.approval_request_id ?? approval.approval_request_id ?? null;
     this.enforcementReceiptId = data.enforcement_receipt_id;
     this.retryable = Boolean(data.retryable);
     this.raw = data;
@@ -74,6 +77,8 @@ export class Decision {
       externalExecutionId?: string;
       resultMetadata?: Record<string, unknown>;
       errorMetadata?: Record<string, unknown>;
+      usage?: Record<string, unknown>;
+      cost?: Record<string, unknown>;
     }
   ): Promise<Record<string, unknown>> {
     if (!this.decisionId) {
@@ -81,6 +86,46 @@ export class Decision {
     }
     return client.reportExecution(this.decisionId, opts);
   }
+}
+
+export interface ConfigurationProvenanceMetadata {
+  /** External application configuration id (not a RAI prompt template). */
+  configuration_id?: string;
+  configuration_version?: string;
+  /** Application-computed SHA-256 of canonicalized config snapshot. */
+  configuration_digest?: string;
+  configuration_source?: string;
+  configuration_environment?: string;
+  deployment_id?: string;
+  release_id?: string;
+  generation_id?: string;
+  turn_id?: string;
+}
+
+export interface RecordUsageOptions {
+  spanType?: string;
+  provider?: string;
+  model?: string;
+  operation?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedInputTokens?: number;
+  cacheWriteTokens?: number;
+  reasoningTokens?: number;
+  totalTokens?: number;
+  /** Explicit billed amount (maps to cost.amount with source EXPLICIT_COST). */
+  cost?: number;
+  /** Provider-reported amount (preferred over cost when both set). */
+  providerCost?: number;
+  currency?: string;
+  costSource?: string;
+  startedAt?: string;
+  completedAt?: string;
+  externalSpanId?: string;
+  parentSpanId?: string;
+  trajectoryId?: string;
+  metadata?: Record<string, unknown>;
+  tokensAreEstimated?: boolean;
 }
 
 export class Session {
@@ -103,7 +148,12 @@ export class Session {
     contentType?: string;
     observedModel?: string;
     principal?: Record<string, unknown>;
-    metadata?: Record<string, unknown>;
+    /**
+     * Optional observation metadata. Prefer ConfigurationProvenanceMetadata keys
+     * (configuration_id/version/digest, deployment_id, release_id, turn_id).
+     * Do not upload the full system prompt / persona body.
+     */
+    metadata?: ConfigurationProvenanceMetadata & Record<string, unknown>;
   }): Promise<Record<string, unknown>> {
     return this.client.request(
       "POST",
@@ -150,11 +200,45 @@ export class Session {
     return new Decision(data);
   }
 
+  /**
+   * Authorize / mask structured data before it reaches the model.
+   * Projects DATA_SOURCE_ACCESSED onto the session trajectory when a catalog
+   * data_source_id is provided.
+   */
+  authorizeDataAccess(opts: {
+    resource: string;
+    fields?: string[];
+    payload?: Record<string, unknown> | unknown[];
+    purpose?: string;
+    accessMode?: string;
+    dataSourceId?: string;
+    toolId?: string;
+    target?: string;
+    rowFilter?: Record<string, unknown>;
+  }): Promise<Record<string, unknown>> {
+    return this.client.request(
+      "POST",
+      `/sdk/v1/sessions/${this.raiSessionId}/data-access/authorize`,
+      {
+        resource: opts.resource,
+        fields: opts.fields ?? [],
+        payload: opts.payload,
+        purpose: opts.purpose,
+        access_mode: opts.accessMode ?? "READ",
+        data_source_id: opts.dataSourceId,
+        tool_id: opts.toolId,
+        target: opts.target,
+        row_filter: opts.rowFilter ?? {},
+      }
+    );
+  }
+
   observeOutput(opts: {
     content?: string;
     contentType?: string;
     observedModel?: string;
-    metadata?: Record<string, unknown>;
+    /** Prefer configuration_* / generation_id / turn_id — not full prompt bodies. */
+    metadata?: ConfigurationProvenanceMetadata & Record<string, unknown>;
   }): Promise<Record<string, unknown>> {
     return this.client.request(
       "POST",
@@ -172,6 +256,124 @@ export class Session {
     return this.client.request(
       "POST",
       `/sdk/v1/sessions/${this.raiSessionId}/end`
+    );
+  }
+
+  recordUsage(opts: RecordUsageOptions = {}): Promise<Record<string, unknown>> {
+    const money =
+      opts.providerCost !== undefined ? opts.providerCost : opts.cost;
+    const costBody =
+      money === undefined && !opts.costSource
+        ? undefined
+        : {
+            amount: money,
+            currency: opts.currency ?? "USD",
+            source:
+              opts.costSource ??
+              (opts.providerCost !== undefined
+                ? "PROVIDER_RESPONSE"
+                : "EXPLICIT_COST"),
+          };
+
+    const usage: Record<string, number> = {};
+    if (opts.inputTokens !== undefined) usage.input_tokens = opts.inputTokens;
+    if (opts.outputTokens !== undefined) usage.output_tokens = opts.outputTokens;
+    if (opts.cachedInputTokens !== undefined) {
+      usage.cached_input_tokens = opts.cachedInputTokens;
+    }
+    if (opts.cacheWriteTokens !== undefined) {
+      usage.cache_write_tokens = opts.cacheWriteTokens;
+    }
+    if (opts.reasoningTokens !== undefined) {
+      usage.reasoning_tokens = opts.reasoningTokens;
+    }
+    if (opts.totalTokens !== undefined) usage.total_tokens = opts.totalTokens;
+
+    return this.client.request(
+      "POST",
+      `/sdk/v1/sessions/${this.raiSessionId}/metering/spans`,
+      {
+        span_type: opts.spanType ?? "MODEL_CALL",
+        provider: opts.provider,
+        model: opts.model,
+        operation: opts.operation,
+        usage,
+        cost: costBody,
+        started_at: opts.startedAt,
+        completed_at: opts.completedAt,
+        external_span_id: opts.externalSpanId,
+        parent_span_id: opts.parentSpanId,
+        trajectory_id: opts.trajectoryId,
+        metadata: opts.metadata ?? {},
+        tokens_are_estimated: opts.tokensAreEstimated ?? false,
+      }
+    );
+  }
+
+  /** Preferred alias — report tokens; VigilRAI prices them. */
+  reportModelUsage(
+    opts: Omit<RecordUsageOptions, "spanType"> = {}
+  ): Promise<Record<string, unknown>> {
+    return this.recordUsage({ ...opts, spanType: "MODEL_CALL" });
+  }
+
+  recordModelCall(
+    opts: Omit<RecordUsageOptions, "spanType"> = {}
+  ): Promise<Record<string, unknown>> {
+    return this.recordUsage({ ...opts, spanType: "MODEL_CALL" });
+  }
+
+  completeMeteringSpan(
+    spanId: string,
+    opts: RecordUsageOptions = {}
+  ): Promise<Record<string, unknown>> {
+    const money =
+      opts.providerCost !== undefined ? opts.providerCost : opts.cost;
+    const costBody =
+      money === undefined && !opts.costSource
+        ? undefined
+        : {
+            amount: money,
+            currency: opts.currency ?? "USD",
+            source:
+              opts.costSource ??
+              (opts.providerCost !== undefined
+                ? "PROVIDER_RESPONSE"
+                : "EXPLICIT_COST"),
+          };
+
+    const usage: Record<string, number> = {};
+    if (opts.inputTokens !== undefined) usage.input_tokens = opts.inputTokens;
+    if (opts.outputTokens !== undefined) usage.output_tokens = opts.outputTokens;
+    if (opts.cachedInputTokens !== undefined) {
+      usage.cached_input_tokens = opts.cachedInputTokens;
+    }
+    if (opts.cacheWriteTokens !== undefined) {
+      usage.cache_write_tokens = opts.cacheWriteTokens;
+    }
+    if (opts.reasoningTokens !== undefined) {
+      usage.reasoning_tokens = opts.reasoningTokens;
+    }
+    if (opts.totalTokens !== undefined) usage.total_tokens = opts.totalTokens;
+
+    return this.client.request(
+      "PATCH",
+      `/sdk/v1/sessions/${this.raiSessionId}/metering/spans/${spanId}`,
+      {
+        span_type: opts.spanType ?? "MODEL_CALL",
+        provider: opts.provider,
+        model: opts.model,
+        operation: opts.operation,
+        usage,
+        cost: costBody,
+        started_at: opts.startedAt,
+        completed_at: opts.completedAt,
+        external_span_id: opts.externalSpanId,
+        parent_span_id: opts.parentSpanId,
+        trajectory_id: opts.trajectoryId,
+        metadata: opts.metadata ?? {},
+        tokens_are_estimated: opts.tokensAreEstimated ?? false,
+      }
     );
   }
 }
@@ -219,10 +421,22 @@ export class RAIClient {
 
   async startSession(opts?: {
     externalSessionId?: string;
+    /** Stable conversation / thread id (grouping only; not a trajectory key). */
     externalConversationId?: string;
     principal?: string;
     channel?: string;
-    metadata?: Record<string, unknown>;
+    /** Tenant-scoped delegation grant bound to this session/turn. */
+    delegationId?: string;
+    /**
+     * Opt-in migration flag. Ended sessions are not reopened by default;
+     * hosts must use a unique externalSessionId per AI turn.
+     */
+    allowEndedSessionReuse?: boolean;
+    /**
+     * Session metadata. Prefer ConfigurationProvenanceMetadata keys so RAI can
+     * record which external config produced this turn without owning prompts.
+     */
+    metadata?: ConfigurationProvenanceMetadata & Record<string, unknown>;
   }): Promise<Session> {
     const data = await this.request("POST", "/sdk/v1/sessions", {
       integration_id: this.integrationId,
@@ -230,6 +444,8 @@ export class RAIClient {
       external_conversation_id: opts?.externalConversationId,
       principal: opts?.principal,
       channel: opts?.channel,
+      delegation_id: opts?.delegationId,
+      allow_ended_session_reuse: opts?.allowEndedSessionReuse ?? false,
       metadata: opts?.metadata ?? {},
     });
     return new Session(this, data);
@@ -254,6 +470,20 @@ export class RAIClient {
       usage: opts.usage,
       cost: opts.cost,
     });
+  }
+
+  async getDecision(decisionId: string): Promise<Decision> {
+    const data = (await this.request(
+      "GET",
+      `/sdk/v1/decisions/${decisionId}`
+    )) as DecisionData;
+    return new Decision(data);
+  }
+
+  getApprovalStatus(
+    approvalRequestId: string
+  ): Promise<Record<string, unknown>> {
+    return this.request("GET", `/sdk/v1/approvals/${approvalRequestId}`);
   }
 
   async request(
@@ -288,7 +518,9 @@ export class RAIClient {
       if (!resp.ok) {
         let detail: Record<string, unknown> = {};
         try {
-          const payload = responseText ? (JSON.parse(responseText) as Record<string, unknown>) : {};
+          const payload = responseText
+            ? (JSON.parse(responseText) as Record<string, unknown>)
+            : {};
           detail = (payload.detail as Record<string, unknown>) ?? payload;
         } catch {
           detail = { message: responseText || resp.statusText };

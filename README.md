@@ -1,8 +1,5 @@
 # @ztechnium/rai-sdk
 
-> **DO NOT EDIT HERE.** This directory is a temporary mirror.
-> Authoritative repository: [github.com/ztechnium/rai-typescript-sdk](https://github.com/ztechnium/rai-typescript-sdk)
-
 Official TypeScript/Node.js SDK for the RAI Control Plane stable `/sdk/v1` governance API.
 
 ## Install
@@ -64,7 +61,9 @@ Typical flow:
 4. `authorizeAction` — request a policy decision before side effects
 5. execute only when `decision.allowed` is true, then `reportExecution`
 6. `observeOutput` — record model/application output (optional)
-7. `end` — close the session
+7. `recordUsage` / `recordModelCall` — report token/cost metering (optional)
+8. `authorizeDataAccess` — authorize/mask structured data before model use (optional)
+9. `end` — close the session
 
 ## Authorization decisions
 
@@ -72,10 +71,34 @@ Typical flow:
 | --- | --- | --- |
 | `ALLOW` | `true` | Proceed with the side effect, then report execution |
 | `DENY` | `false` | Do not execute the side effect |
-| `REQUIRE_APPROVAL` | `false` | Hold for human approval; use `approvalRequestId` |
+| `REQUIRE_APPROVAL` | `false` | Hold for human approval; use `approvalRequestId` / `getApprovalStatus` |
 | `MONITOR` | `false` | Observability-only signal; do not treat as permission to execute |
 
 Only `ALLOW` sets `decision.allowed` to `true`. Treat every other decision as non-executing unless your integration policy explicitly defines otherwise for `MONITOR`.
+
+## Metering
+
+```typescript
+await session.recordModelCall({
+  provider: "openai",
+  model: "gpt-4o",
+  inputTokens: 120,
+  outputTokens: 40,
+});
+```
+
+Use `completeMeteringSpan(spanId, …)` to PATCH an open span when usage completes asynchronously.
+
+## Data access
+
+```typescript
+const result = await session.authorizeDataAccess({
+  resource: "customer.profile",
+  fields: ["email", "ssn"],
+  purpose: "support_summary",
+  accessMode: "READ",
+});
+```
 
 ## Behavior
 
@@ -85,6 +108,7 @@ Only `ALLOW` sets `decision.allowed` to `true`. Treat every other decision as no
 - **Runtime credentials** — pass `apiKey` from server-side environment or secrets management. Never embed agent keys in browser-side JavaScript.
 - **Version headers** — requests include `User-Agent: rai-sdk-ts/<version>` and `X-RAI-SDK-Version`.
 - **API compatibility** — `API_RANGE` is `>=1.0.0,<2.0.0` for the `/sdk/v1` contract.
+- **Delegation** — pass `delegationId` on `startSession` to bind a tenant-scoped grant; ended sessions are not reused unless `allowEndedSessionReuse: true`.
 
 ## Error handling
 
@@ -99,11 +123,12 @@ Failed API responses and fail-closed transport errors throw `RAIError` with:
 
 | Export | Description |
 | --- | --- |
-| `RAIClient` | HTTP client for `/sdk/v1` |
-| `Session` | Governed session handle |
+| `RAIClient` | HTTP client for `/sdk/v1` (`health`, `heartbeat`, `startSession`, `reportExecution`, `getDecision`, `getApprovalStatus`) |
+| `Session` | Governed session handle (`observeInput`, `authorizeAction`, `authorizeDataAccess`, `recordUsage`, `observeOutput`, `end`, …) |
 | `Decision` | Authorization decision wrapper |
 | `RAIError` | Structured SDK/API error |
-| `SDK_VERSION` | Package version string (`0.1.0`) |
+| `ConfigurationProvenanceMetadata` | Optional config provenance keys for metadata |
+| `SDK_VERSION` | Package version string (`0.2.0`) |
 | `API_RANGE` | Supported server API semver range |
 
 ## Module Format
@@ -124,8 +149,6 @@ The `exports` map exposes:
 Native ESM (`import`) support is planned as a follow-up dual-build (`"import"` condition). For ESM projects today, use dynamic `import()` of the CJS build or a bundler that resolves CJS interop.
 
 ## Development
-
-Contribute in the public repository: [github.com/ztechnium/rai-typescript-sdk](https://github.com/ztechnium/rai-typescript-sdk).
 
 ```bash
 npm install

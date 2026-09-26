@@ -44,7 +44,7 @@ describe("@ztechnium/rai-sdk", () => {
 
   describe("exports", () => {
     it("exposes SDK_VERSION and API_RANGE", () => {
-      assert.equal(SDK_VERSION, "0.1.1");
+      assert.equal(SDK_VERSION, "0.2.0");
       assert.match(API_RANGE, /^>=1\.0\.0,<2\.0\.0$/);
     });
   });
@@ -276,6 +276,134 @@ describe("@ztechnium/rai-sdk", () => {
         tool: "create_order",
         idempotencyKey: "idem-abc",
       });
+    });
+  });
+
+  describe("extended /sdk/v1 surface", () => {
+    it("sends delegation and session-reuse flags on startSession", async () => {
+      fetchMock.mock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+        assert.equal(requestUrl(url), "https://rai.example.com/sdk/v1/sessions");
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.delegation_id, "del-1");
+        assert.equal(body.allow_ended_session_reuse, true);
+        return jsonResponse({ rai_session_id: "sess-1" });
+      });
+
+      const client = new RAIClient({
+        baseUrl: "https://rai.example.com",
+        apiKey: "key",
+        integrationId: "integration-1",
+      });
+      await client.startSession({
+        delegationId: "del-1",
+        allowEndedSessionReuse: true,
+      });
+    });
+
+    it("records metering spans and completes them", async () => {
+      const calls: Array<{ path: string; method?: string; body?: unknown }> = [];
+      fetchMock.mock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+        const path = requestUrl(url).replace("https://rai.example.com", "");
+        const body =
+          init?.body !== undefined ? JSON.parse(String(init.body)) : undefined;
+        calls.push({ path, method: init?.method, body });
+        if (path === "/sdk/v1/sessions") {
+          return jsonResponse({ rai_session_id: "sess-1" });
+        }
+        if (path === "/sdk/v1/sessions/sess-1/metering/spans") {
+          return jsonResponse({ span_id: "span-1" });
+        }
+        if (path === "/sdk/v1/sessions/sess-1/metering/spans/span-1") {
+          return jsonResponse({ completed: true });
+        }
+        return jsonResponse({}, 404);
+      });
+
+      const client = new RAIClient({
+        baseUrl: "https://rai.example.com",
+        apiKey: "key",
+        integrationId: "integration-1",
+      });
+      const session = await client.startSession();
+      await session.recordModelCall({
+        provider: "openai",
+        model: "gpt-4o",
+        inputTokens: 10,
+        outputTokens: 5,
+        providerCost: 0.01,
+      });
+      await session.completeMeteringSpan("span-1", {
+        outputTokens: 8,
+        completedAt: "2026-09-26T12:00:00Z",
+      });
+
+      assert.equal(calls[1]?.method, "POST");
+      assert.equal(
+        (calls[1]?.body as { usage: { input_tokens: number } }).usage.input_tokens,
+        10
+      );
+      assert.equal(
+        (calls[1]?.body as { cost: { source: string } }).cost.source,
+        "PROVIDER_RESPONSE"
+      );
+      assert.equal(calls[2]?.method, "PATCH");
+    });
+
+    it("authorizes data access", async () => {
+      fetchMock.mock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+        const path = requestUrl(url).replace("https://rai.example.com", "");
+        if (path === "/sdk/v1/sessions") {
+          return jsonResponse({ rai_session_id: "sess-1" });
+        }
+        if (path === "/sdk/v1/sessions/sess-1/data-access/authorize") {
+          const body = JSON.parse(String(init?.body));
+          assert.equal(body.resource, "customer.profile");
+          assert.equal(body.access_mode, "READ");
+          return jsonResponse({ decision: "ALLOW", masked_payload: {} });
+        }
+        return jsonResponse({}, 404);
+      });
+
+      const client = new RAIClient({
+        baseUrl: "https://rai.example.com",
+        apiKey: "key",
+        integrationId: "integration-1",
+      });
+      const session = await client.startSession();
+      const result = await session.authorizeDataAccess({
+        resource: "customer.profile",
+        fields: ["email"],
+      });
+      assert.equal(result.decision, "ALLOW");
+    });
+
+    it("fetches decisions and approval status", async () => {
+      fetchMock.mock.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+        const path = requestUrl(url).replace("https://rai.example.com", "");
+        if (path === "/sdk/v1/decisions/dec-1") {
+          assert.equal(init?.method, "GET");
+          return jsonResponse({
+            decision: "REQUIRE_APPROVAL",
+            decision_id: "dec-1",
+            approval: { approval_request_id: "apr-1" },
+          });
+        }
+        if (path === "/sdk/v1/approvals/apr-1") {
+          return jsonResponse({ status: "PENDING", approval_request_id: "apr-1" });
+        }
+        return jsonResponse({}, 404);
+      });
+
+      const client = new RAIClient({
+        baseUrl: "https://rai.example.com",
+        apiKey: "key",
+        integrationId: "integration-1",
+      });
+      const decision = await client.getDecision("dec-1");
+      assert.equal(decision.decision, "REQUIRE_APPROVAL");
+      assert.equal(decision.approvalRequestId, "apr-1");
+      const approval = await client.getApprovalStatus("apr-1");
+      assert.equal(approval.status, "PENDING");
     });
   });
 
