@@ -108,7 +108,7 @@ const result = await session.authorizeDataAccess({
 - **Runtime credentials** — pass `apiKey` from server-side environment or secrets management. Never embed agent keys in browser-side JavaScript.
 - **Version headers** — requests include `User-Agent: rai-sdk-ts/<version>` and `X-RAI-SDK-Version`.
 - **API compatibility** — `API_RANGE` is `>=1.0.0,<2.0.0` for the `/sdk/v1` contract.
-- **Delegation** — pass `delegationId` on `startSession` to bind a tenant-scoped grant; ended sessions are not reused unless `allowEndedSessionReuse: true`.
+- **Delegation** — pass `delegationId` on `startSession` to bind a grant for this instance; ended sessions are not reused unless `allowEndedSessionReuse: true`.
 
 ## Error handling
 
